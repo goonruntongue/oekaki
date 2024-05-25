@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shared Canvas</title>
+    <style>
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #fff;
+        }
+        
+        html {
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="canvas"></canvas>
+    <div class="result"></div>
+    <form class="controller">
+        <p>
+            <textarea class="message" rows="2" cols="50"></textarea>
+        </p>
+        <p>
+            <input type="submit" class="btn" value="Send Message">
+        </p>
+    </form>
+
+    <script>
+        var canvas = document.getElementById('canvas');
+        var ctx = canvas.getContext('2d');
+        var isMouseDown = false;
+        var conn = new WebSocket('ws://192.168.254.106:8765');
+        var queue = []; // WebSocket接続が確立されるまでのデータを保持するキュー
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        conn.onopen = function(e) {
+            console.log("Connection established!");
+            // キュー内のデータを送信する
+            while (queue.length > 0) {
+                conn.send(queue.shift());
+            }
+        };
+
+        conn.onmessage = function(e) {
+            var data = JSON.parse(e.data);
+            if (data.type === 'draw') {
+                drawFromServer(data);
+            } else if (data.type === 'message') {
+                var $p = document.createElement('p');
+                $p.innerText = data.content;
+                document.querySelector('.result').appendChild($p);
+            }
+        };
+
+        function sendDrawData(eventType, x, y) {
+            var data = JSON.stringify({
+                type: 'draw',
+                event: eventType,
+                x: x,
+                y: y
+            });
+            if (conn.readyState === WebSocket.OPEN) {
+                conn.send(data);
+            } else {
+                queue.push(data); // 接続が確立されるまでデータをキューに保持する
+            }
+        }
+
+        function drawFromServer(data) {
+            if (data.event === 'start') {
+                ctx.beginPath();
+                ctx.moveTo(data.x, data.y);
+            } else if (data.event === 'move') {
+                ctx.lineTo(data.x, data.y);
+                ctx.stroke();
+            } else if (data.event === 'end') {
+                ctx.closePath();
+            }
+        }
+
+        function getTouchPos(touchEvent) {
+            var rect = canvas.getBoundingClientRect();
+            return {
+                x: touchEvent.touches[0].clientX - rect.left,
+                y: touchEvent.touches[0].clientY - rect.top
+            };
+        }
+
+        function startEvent(event) {
+            event.preventDefault();
+            isMouseDown = true;
+            var x, y;
+            if (event.type === 'touchstart') {
+                var pos = getTouchPos(event);
+                x = pos.x;
+                y = pos.y;
+            } else {
+                x = event.clientX - canvas.offsetLeft;
+                y = event.clientY - canvas.offsetTop;
+            }
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            sendDrawData('start', x, y);
+        }
+
+        function moveEvent(event) {
+            event.preventDefault();
+            if (isMouseDown) {
+                var x, y;
+                if (event.type === 'touchmove') {
+                    var pos = getTouchPos(event);
+                    x = pos.x;
+                    y = pos.y;
+                } else {
+                    x = event.clientX - canvas.offsetLeft;
+                    y = event.clientY - canvas.offsetTop;
+                }
+                ctx.lineTo(x, y);
+                ctx.stroke();
+                sendDrawData('move', x, y);
+            }
+        }
+
+        function endEvent(event) {
+            event.preventDefault();
+            isMouseDown = false;
+            var x, y;
+            if (event.type === 'touchend') {
+                var pos = getTouchPos(event.changedTouches[0]);
+                x = pos.x;
+                y = pos.y;
+            } else {
+                x = event.clientX - canvas.offsetLeft;
+                y = event.clientY - canvas.offsetTop;
+            }
+            ctx.closePath();
+            sendDrawData('end', x, y);
+        }
+
+        canvas.addEventListener('mousedown', startEvent);
+        canvas.addEventListener('mousemove', moveEvent);
+        canvas.addEventListener('mouseup', endEvent);
+        canvas.addEventListener('touchstart', startEvent, {
+            passive: false
+        });
+        canvas.addEventListener('touchmove', moveEvent, {
+            passive: false
+        });
+        canvas.addEventListener('touchend', endEvent, {
+            passive: false
+        });
+
+        document.querySelector('.btn').addEventListener('click', function(e) {
+            e.preventDefault();
+            var message = document.querySelector('.message').value;
+            var data = JSON.stringify({
+                type: 'message',
+                content: message
+            });
+            if (conn.readyState === WebSocket.OPEN) {
+                conn.send(data);
+            } else {
+                queue.push(data); // 接続が確立されるまでデータをキューに保持する
+            }
+            document.querySelector('.message').value = '';
+        });
+    </script>
+</body>
+
+</html>
